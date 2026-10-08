@@ -101,6 +101,20 @@ ul.log .cal{font-family:var(--display);font-weight:700;font-variant-numeric:tabu
 .chip[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft);font-weight:700}
 .keybox{border-top:1px solid var(--line);padding-top:10px;display:grid;gap:8px}
 .keybox summary{cursor:pointer;color:var(--accent);font-weight:700;font-size:.9rem}
+.coachhead{border-radius:12px;padding:14px 16px;display:grid;gap:4px}
+.coachhead b{font-family:var(--display);font-size:1.15rem}
+.coachhead span{font-size:.92rem}
+.coachhead.on{background:var(--accent-soft)} .coachhead.on b{color:var(--good)}
+.coachhead.off{background:var(--burn-soft)} .coachhead.off b{color:var(--burn)}
+.coachhead.warn{background:var(--burn-soft)} .coachhead.warn b{color:var(--warn)}
+ul.log li.tip{grid-template-columns:auto minmax(0,1fr);align-items:start}
+.tag{font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;margin-top:2px}
+.tag.food{background:var(--accent-soft);color:var(--accent)}
+.tag.workout{background:var(--burn-soft);color:var(--burn)}
+.tag.habit{background:var(--bg);color:var(--muted);border:1px solid var(--line)}
+.ai{display:grid;gap:12px;border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--bg)}
+ul.plain{margin:0;padding-left:18px;display:grid;gap:6px}
+.goalbox{display:grid;gap:4px;border-left:3px solid var(--accent);padding-left:12px;font-weight:700}
 .week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end;height:130px}
 .week .col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px;min-width:0}
 .week .b{width:70%;border-radius:4px 4px 0 0;min-height:2px}
@@ -148,6 +162,14 @@ ul.log .cal{font-family:var(--display);font-weight:700;font-variant-numeric:tabu
           </div>
         </div>
         <div class="status" id="status"></div>
+      </div>
+
+      <div class="card" id="coach">
+        <h2>Coach <small>what to improve and how to get there</small></h2>
+        <div class="coachhead" id="coachHead"></div>
+        <ul class="log" id="coachTips"></ul>
+        <button class="btn ghost" type="button" id="coachAsk" hidden>Get a personal plan from Claude</button>
+        <div id="coachAI" hidden></div>
       </div>
 
       <div class="card">
@@ -450,6 +472,7 @@ function renderWeek(){
     ? `<dt>Days logged</dt><dd>${logged} of 7</dd><dt>${total > 0 ? "Behind goal" : "Ahead of goal"}</dt><dd>${fmt(Math.abs(total))} cal</dd>
        <dt>Effect on weight</dt><dd>${total > 0 ? "+" : "−"}${(Math.abs(total)/3500).toFixed(2)} lb vs plan</dd>`
     : `<dt>Days logged</dt><dd>0 of 7</dd>`;
+  renderCoach();
 }
 
 async function loadDay(d){
@@ -727,6 +750,198 @@ $("tabPlan").addEventListener("click", () => tab("plan"));
 $("day").value = day;
 $("day").addEventListener("change", async () => { if ($("day").value){ await loadDay($("day").value); loadWeek(); } });
 
+/* ---------- coach ---------- */
+const SWAPS = [
+  [/\b(soda|coke|pepsi|sprite|dr pepper|mountain dew|lemonade|sweet tea)\b/i, "Switch to the diet version, sparkling water or unsweetened tea", 0.95],
+  [/\b(frappuccino|frappe|milkshake|shake|smoothie)\b/i, "Order the small size, or a plain iced coffee with a splash of milk", 0.6],
+  [/\b(latte|mocha|macchiato|cappuccino)\b/i, "Go one size smaller with skim or oat milk and no whip or syrup", 0.4],
+  [/\b(fries|chips|tots|onion rings)\b/i, "Pick the small size, or swap for a side salad, fruit or popcorn", 0.5],
+  [/\b(burrito)\b/i, "Make it a bowl (no tortilla) and go light on cheese and sour cream", 0.3],
+  [/\b(pizza)\b/i, "Have thin crust, one less slice, and add a salad first", 0.3],
+  [/\b(burger|cheeseburger|whopper|big mac)\b/i, "Choose a single patty, skip the cheese or mayo, and have a side salad", 0.3],
+  [/\b(fried chicken|nuggets|tenders|wings|fried)\b/i, "Choose grilled instead of fried, or a smaller piece count", 0.35],
+  [/\b(pasta|spaghetti|alfredo|mac and cheese|mac & cheese)\b/i, "Take a half portion of pasta and fill the rest of the plate with vegetables or chicken", 0.35],
+  [/\b(sub|footlong|sandwich|hoagie)\b/i, "Go 6 inch instead of footlong, or skip the cheese and mayo", 0.35],
+  [/\b(ice cream|cake|cookie|cookies|donut|doughnut|brownie|pastry|muffin|dessert|candy|chocolate)\b/i, "Swap for Greek yogurt with fruit, or have half a portion", 0.5],
+  [/\b(beer|wine|cocktail|margarita|alcohol)\b/i, "Have one fewer drink and alternate with water, or pick a light beer", 0.4],
+  [/\b(rice|biryani|fried rice)\b/i, "Have half the rice and add more vegetables or protein", 0.3],
+  [/\b(bagel|croissant|danish)\b/i, "Have half, or switch to whole grain toast with eggs", 0.4],
+  [/\b(salad)\b/i, "Ask for dressing on the side and skip croutons and cheese", 0.25]
+];
+const MAX_WORKOUT_MIN = 60;
+
+function weekStats(){
+  const base = new Date(day + "T12:00:00"), rows = [];
+  for (let i = 6; i >= 0; i--){
+    const d = new Date(base); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0,10);
+    const L = key === day ? log : days[key];
+    if (L && ((L.meals||[]).length || (L.workouts||[]).length)) rows.push({ key, L, eaten: sum(L.meals||[]), burned: sum(L.workouts||[]) });
+  }
+  const n = rows.length || 1;
+  const allMeals = rows.flatMap(r => (r.L.meals||[]).map(m => ({ ...m, key: r.key })));
+  return {
+    days: rows.length,
+    avgEaten: rows.reduce((a,r) => a + r.eaten, 0) / n,
+    avgBurned: rows.reduce((a,r) => a + r.burned, 0) / n,
+    totalGap: rows.reduce((a,r) => a + (r.eaten - r.burned - plan.net), 0),
+    workoutDays: rows.filter(r => r.burned > 0).length,
+    overDays: rows.filter(r => r.eaten - r.burned > plan.net + 100).length,
+    lowDays: rows.filter(r => (r.L.meals||[]).length && r.eaten < floorCal()).length,
+    meals: allMeals
+  };
+}
+const floorCal = () => profile.sex === "m" ? 1500 : 1200;
+const perMin = met => met * 3.5 * plan.kg / 200;
+
+function coachPlan(){
+  const eaten = sum(log.meals), burned = sum(log.workouts);
+  const eatLeft = plan.eat - eaten, burnLeft = Math.max(0, plan.burn - burned);
+  const gap = (eaten - burned) - plan.net;
+  const W = weekStats();
+  const goal = +profile.goal;
+  const tips = [];
+  let focus = "on", headline, detail;
+
+  // Safety first: eating too little
+  if (W.lowDays >= 2 || (W.days >= 2 && W.avgEaten < floorCal() - 100)){
+    focus = "low";
+    headline = "Eat enough to fuel your plan";
+    detail = `On ${W.lowDays} logged day${W.lowDays === 1 ? "" : "s"} you ate under ${fmt(floorCal())} calories. Going too low makes the plan hard to keep and can slow progress. Do not cut further.`;
+    tips.push({ kind:"food", title:"Add a balanced snack", text:`Add 200 to 300 calories of protein and fiber, like Greek yogurt with fruit, a turkey wrap, or peanut butter on whole grain toast.` });
+    tips.push({ kind:"habit", title:"Check that meals are logged", text:"If some meals are missing from the log, add them so the coaching reflects what you really ate." });
+    if (!log.meals.length) return { focus, headline, detail, tips };
+  }
+
+  const foodOver = W.days ? W.avgEaten - plan.eat : eaten - plan.eat;
+  const burnShort = W.days ? plan.burn - W.avgBurned : burnLeft;
+
+  if (focus !== "low"){
+    if (!log.meals.length && !log.workouts.length && !W.days){
+      focus = "start"; headline = "Log today to get coaching";
+      detail = `Add your meals and workouts. The coach compares them to your targets of ${fmt(plan.eat)} calories eaten and ${fmt(plan.burn)} burned and tells you what to adjust.`;
+    } else if (foodOver > 150 && burnShort > 100){
+      focus = "both"; headline = "Trim food a little and move a little more";
+      detail = `Over your logged days you averaged ${fmt(W.avgEaten)} calories eaten (target ${fmt(plan.eat)}) and ${fmt(W.avgBurned)} burned (target ${fmt(plan.burn)}). Small changes on both sides close the gap faster than a big change on one.`;
+    } else if (foodOver > 150){
+      focus = "food"; headline = "Food is where to adjust";
+      detail = `You are averaging ${fmt(W.avgEaten || eaten)} calories a day against a ${fmt(plan.eat)} target, about ${fmt(foodOver)} over. Your workouts are close to plan, so the fastest win is a couple of swaps.`;
+    } else if (burnShort > 100){
+      focus = "workout"; headline = "Workouts are where to adjust";
+      detail = `Your eating is on target, but you are burning about ${fmt(burnShort)} calories a day less than planned. Adding activity will put you back on pace.`;
+    } else if (gap > 100){
+      focus = "today"; headline = "Close today's gap";
+      detail = `Your week is on track, but today you are ${fmt(gap)} calories behind. One of the moves below will fix it.`;
+    } else {
+      focus = "on"; headline = "You are on track";
+      detail = W.days ? `Across ${W.days} logged day${W.days === 1 ? "" : "s"} you are ${W.totalGap > 0 ? fmt(W.totalGap) + " calories behind" : fmt(-W.totalGap) + " calories ahead of"} plan. Keep the same routine.` : "Keep logging to build a weekly picture.";
+    }
+  }
+
+  // Food tips: biggest meals with a matching swap
+  if (!["low","start"].includes(focus) && W.meals.length){
+    const maxSwaps = focus === "workout" || focus === "on" ? 1 : 2;
+    const ranked = [...W.meals].sort((a,b) => b.cal - a.cal);
+    const seen = new Set(); let added = 0;
+    for (const m of ranked){
+      const swap = SWAPS.find(([re]) => re.test(m.name));
+      if (!swap || seen.has(swap[1])) continue;
+      seen.add(swap[1]);
+      const save = Math.round(m.cal * swap[2] / 10) * 10;
+      if (save < 60) continue;
+      tips.push({ kind:"food", title:`${m.name} (${fmt(m.cal)} cal)`, text:`${swap[1]}. That saves about ${fmt(save)} calories each time.` });
+      if (++added >= maxSwaps) break;
+    }
+    const big = ranked.find(m => m.cal > plan.eat * 0.45);
+    if (big && added < maxSwaps) tips.push({ kind:"food", title:`One meal is almost half your day`, text:`${big.name} was ${fmt(big.cal)} calories, ${Math.round(big.cal/plan.eat*100)}% of your daily target. Split it into two meals, or save half for later.` });
+    if (!added && !big && ["food","both"].includes(focus)) tips.push({ kind:"food", title:"Cut about 15% from your largest meal", text:`Use a smaller plate, skip second helpings, and fill half the plate with vegetables. On a ${fmt(plan.eat * 0.35)} calorie lunch that saves about ${fmt(plan.eat * 0.35 * 0.15)}.` });
+    if (focus === "today" && eatLeft > 0 && eatLeft < plan.eat * 0.3)
+      tips.push({ kind:"food", title:`${fmt(eatLeft)} calories left today`, text:`Keep the next meal light: grilled chicken or fish with vegetables, a big salad with protein, or eggs with fruit.` });
+  }
+
+  // Workout tips
+  if (["workout","both","today"].includes(focus) || (burnLeft > 0 && focus !== "low")){
+    const need = focus === "today" ? Math.max(gap, burnLeft) : Math.max(burnLeft, burnShort);
+    if (need > 0){
+      const walk = Math.round(need / perMin(4.3)), jog = Math.round(need / perMin(8)), bike = Math.round(need / perMin(7));
+      if (walk <= MAX_WORKOUT_MIN){
+        tips.push({ kind:"workout", title:`Burn ${fmt(need)} more today`, text:`About ${walk} min of brisk walking, ${jog} min of jogging, or ${bike} min of moderate cycling.` });
+      } else {
+        const perDay = Math.round(perMin(4.3) * MAX_WORKOUT_MIN);
+        tips.push({ kind:"workout", title:`Spread the extra burn out`, text:`${fmt(need)} calories is more than an hour of walking. Do 45 to 60 min today (about ${fmt(perDay)} calories) and trim the rest from food, rather than overdoing one session.` });
+      }
+    }
+    if (W.days >= 3 && W.workoutDays < Math.min(4, W.days))
+      tips.push({ kind:"workout", title:`Workouts on ${W.workoutDays} of ${W.days} days`, text:`Aim for at least 4 workout days a week. Short sessions count: a 20 minute walk after lunch and dinner burns about ${fmt(perMin(4.3) * 40)} calories.` });
+    if (goal < 0 && W.days >= 3 && !(Object.values(days).concat([log]).some(L => (L?.workouts||[]).some(w => /strength/i.test(w.name)))))
+      tips.push({ kind:"workout", title:"Add strength training twice a week", text:"While losing weight, 2 sessions of 30 min of strength work helps keep muscle, so more of what you lose is fat." });
+  }
+
+  // Pace check
+  if (W.days >= 3 && goal !== 0){
+    const weekly = (W.totalGap / W.days) * 7 / 3500;
+    const actual = goal + weekly;
+    tips.push({ kind:"habit", title:"Your current pace", text: goal < 0
+      ? `At this rate you would lose about ${Math.max(0, -actual).toFixed(1)} lb a week (goal ${Math.abs(goal)} lb).${actual > 0 ? " Right now the numbers point to slight gain." : ""}`
+      : `At this rate you would gain about ${actual.toFixed(1)} lb a week (goal ${goal} lb).` });
+  }
+  if (W.days && W.days < 4) tips.push({ kind:"habit", title:"Log a few more days", text:`You have ${W.days} day${W.days === 1 ? "" : "s"} logged this week. Coaching gets more accurate with 4 or more.` });
+
+  return { focus, headline, detail, tips: tips.slice(0, 6), W, eaten, burned, gap };
+}
+
+const KIND = { food:"Food", workout:"Workout", habit:"Habit" };
+function renderCoach(){
+  const c = coachPlan();
+  const tone = { on:"on", start:"on", low:"warn", food:"off", workout:"off", both:"off", today:"off" }[c.focus];
+  $("coachHead").className = "coachhead " + tone;
+  $("coachHead").innerHTML = `<b>${esc(c.headline)}</b><span>${esc(c.detail)}</span>`;
+  $("coachTips").innerHTML = c.tips.map(t => `<li class="tip"><span class="tag ${t.kind}">${KIND[t.kind]}</span><div><div class="name">${esc(t.title)}</div><div class="meta">${esc(t.text)}</div></div></li>`).join("");
+  $("coachAsk").hidden = !sampleFn;
+}
+
+let coachCtl = null;
+async function askCoach(){
+  if (!sampleFn) return;
+  coachCtl?.abort(); coachCtl = new AbortController();
+  const out = $("coachAI"), btn = $("coachAsk");
+  btn.disabled = true; out.hidden = false;
+  out.innerHTML = `<p class="note">Your coach is reviewing your week…</p>`;
+  const c = coachPlan(), W = c.W;
+  const recent = [...W.meals].sort((a,b) => b.cal - a.cal).slice(0, 15).map(m => `${m.key}: ${m.name} (${m.meta || "no size"}) ${Math.round(m.cal)} cal`).join("\n");
+  const workouts = Object.entries({ ...days, [day]: log }).filter(([,L]) => L).flatMap(([k,L]) => (L.workouts||[]).map(w => `${k}: ${w.name} ${w.min ? w.min + " min" : ""} ${Math.round(w.cal)} cal`)).slice(-15).join("\n");
+  const prompt = `You are a supportive, practical nutrition and fitness coach inside a calorie tracking app. Give specific, realistic adjustments.
+
+Person: ${profile.sex === "m" ? "male" : "female"}, age ${profile.age}, weight ${Math.round(plan.kg)} kg. Goal: ${+profile.goal < 0 ? "lose " + Math.abs(profile.goal) + " lb per week" : +profile.goal > 0 ? "gain " + profile.goal + " lb per week" : "maintain weight"}.
+Daily targets: eat ${Math.round(plan.eat)} cal, burn ${Math.round(plan.burn)} cal through exercise.
+Today (${day}): eaten ${Math.round(c.eaten)}, burned ${Math.round(c.burned)}, ${c.gap > 0 ? Math.round(c.gap) + " cal behind goal" : Math.round(-c.gap) + " cal of room left"}.
+Last 7 days: ${W.days} days logged, average eaten ${Math.round(W.avgEaten)}, average burned ${Math.round(W.avgBurned)}, ${W.workoutDays} workout days, net ${Math.round(W.totalGap)} cal vs plan.
+Largest logged meals:
+${recent || "(none)"}
+Workouts:
+${workouts || "(none)"}
+
+Rules: Never suggest eating below ${floorCal()} calories a day, skipping meals, fasting, or more than 60 minutes of extra exercise in a day. If intake looks too low, tell them to eat more. Name their actual foods when suggesting swaps and give calorie savings. Keep each item to one or two short sentences. No medical claims.
+Reply with only JSON:
+{"summary":"2 sentences on how they are doing","improve":["the 1-3 most important things to change"],"food":[{"change":"specific swap or adjustment","saves":120}],"workout":[{"change":"specific session","burns":200}],"this_week":"one concrete goal for the next 7 days"}`;
+  try{
+    const r = await sampleFn.json(prompt, { signal: coachCtl.signal, modelTier: "default" });
+    const list = (arr, f) => (Array.isArray(arr) ? arr : []).slice(0, 4).map(f).join("");
+    out.innerHTML = `<div class="ai">
+      <p style="margin:0">${esc(r.summary || "")}</p>
+      ${Array.isArray(r.improve) && r.improve.length ? `<div><span class="lbl">What to improve</span><ul class="plain">${list(r.improve, x => `<li>${esc(x)}</li>`)}</ul></div>` : ""}
+      ${Array.isArray(r.food) && r.food.length ? `<div><span class="lbl">Food changes</span><ul class="plain">${list(r.food, x => `<li>${esc(x.change || x)}${+x.saves ? ` <b>−${fmt(x.saves)} cal</b>` : ""}</li>`)}</ul></div>` : ""}
+      ${Array.isArray(r.workout) && r.workout.length ? `<div><span class="lbl">Workout changes</span><ul class="plain">${list(r.workout, x => `<li>${esc(x.change || x)}${+x.burns ? ` <b>+${fmt(x.burns)} cal</b>` : ""}</li>`)}</ul></div>` : ""}
+      ${r.this_week ? `<div class="goalbox"><span class="lbl" style="margin:0">Goal for this week</span>${esc(r.this_week)}</div>` : ""}
+    </div>`;
+  }catch(e){
+    if (e?.code === "cancelled") return;
+    if (["not_granted","sampling_disabled","not_declared","capability_disabled","capability_removed"].includes(e?.code)){ sampleFn = null; btn.hidden = true; }
+    out.innerHTML = `<p class="note">${e?.code === "rate_limited" ? "Too many requests right now. Try again in a minute." : "The coach could not answer right now. The tips above still apply."}</p>`;
+  }finally{ btn.disabled = false; }
+}
+$("coachAsk").addEventListener("click", askCoach);
+
 /* ---------- boot ---------- */
 writeProfile(); calcPlan(); woUpdate(); renderToday();
 (async () => {
@@ -736,6 +951,7 @@ writeProfile(); calcPlan(); woUpdate(); renderToday();
   else tab("plan");
   await loadDay(day); loadWeek();
   try{ sampleFn = await claude.use("sample"); }catch(e){ sampleFn = null; }
+  renderCoach();
 })();
 </script>
 </body>

@@ -21,6 +21,18 @@ Type a food and tap **Look up calories**. The page checks several sources and lo
   * For more, get a free key at https://fdc.nal.usda.gov/api-key-signup and paste it into the key box under the lookup results. The key is stored only in your browser and is never committed to this repo (USDA deactivates keys found in public code).
 * **Inside claude.ai:** the lookup asks Claude, which also covers chain restaurant menus, and falls back to the databases above.
 
+## Coach
+
+The **Coach** card on the Today tab reads your last 7 days of logs and tells you what to adjust:
+
+* Whether food, workouts, or both are holding you back, with your averages against your targets
+* Specific swaps for your highest calorie meals (for example a burrito bowl instead of a burrito) and the calories each one saves
+* How many minutes of walking, jogging or cycling closes today's gap, capped at an hour a day
+* Your actual weekly pace against your goal
+* A warning if you are eating too little, instead of telling you to cut more
+
+Inside claude.ai there is also a **Get a personal plan from Claude** button for a written plan and a goal for the week.
+
 ## Where the data is kept
 
 * Inside claude.ai, logs sync to your Claude account.
