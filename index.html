@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Daily Calorie Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: tabs switch between Today (log + progress) and My plan (body stats + targets); single column on phones */
+:root{
+  --bg:#f3f5f2; --surface:#ffffff; --ink:#1c2420; --muted:#5d6b63; --line:#dde3de;
+  --accent:#1f6f5c; --accent-soft:#e2efe9; --burn:#c2410c; --burn-soft:#fbeadf;
+  --good:#15803d; --bad:#b91c1c; --warn:#a16207;
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121715; --surface:#1a211e; --ink:#e7ece9; --muted:#9aa9a1; --line:#2b3531;
+  --accent:#5cc4a6; --accent-soft:#1c3530; --burn:#fb923c; --burn-soft:#3a2418;
+  --good:#4ade80; --bad:#f87171; --warn:#facc15; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121715; --surface:#1a211e; --ink:#e7ece9; --muted:#9aa9a1; --line:#2b3531;
+  --accent:#5cc4a6; --accent-soft:#1c3530; --burn:#fb923c; --burn-soft:#3a2418;
+  --good:#4ade80; --bad:#f87171; --warn:#facc15; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5;padding-inline:16px;padding-block:24px 48px}
+.wrap{max-width:980px;margin:0 auto;display:grid;gap:20px}
+header{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:end;justify-content:space-between}
+header h1{font-family:var(--display);font-weight:700;font-size:clamp(1.7rem,4vw,2.4rem);margin:0;letter-spacing:-.01em;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted);max-width:60ch}
+.tabs{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.tabs button{font:inherit;font-weight:700;padding:9px 18px;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--accent);color:var(--surface)}
+.grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:20px;align-items:start}
+@media (max-width:760px){.grid{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;gap:14px;min-width:0}
+.card h2{font-family:var(--display);font-size:1.15rem;margin:0;font-weight:700}
+.card h2 small{font-family:var(--body);font-weight:400;font-size:.85rem;color:var(--muted);margin-left:6px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row3{display:grid;grid-template-columns:2fr 1fr auto;gap:8px;align-items:end}
+@media (max-width:480px){.row3{grid-template-columns:1fr 1fr}.row3 .full{grid-column:1/-1}}
+label,.lbl{display:block;font-size:.76rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+input,select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{font:inherit;font-weight:700;border-radius:8px;padding:10px 14px;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:var(--surface);white-space:nowrap}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn.burnb{background:var(--burn);border-color:var(--burn)}
+.btn:disabled{opacity:.55;cursor:wait}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{flex:1;font:inherit;font-size:.92rem;padding:9px 6px;border:0;background:var(--bg);color:var(--muted);cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--surface);font-weight:700}
+.inline{display:flex;gap:8px}
+.inline > div{flex:1;min-width:0}
+.unit{font-size:.8rem;color:var(--muted);margin-top:4px}
+.big{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tile{border-radius:14px;padding:16px;min-width:0}
+.tile.eat{background:var(--accent-soft)} .tile.burn{background:var(--burn-soft)}
+.tile .k{font-size:.76rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.tile.eat .k{color:var(--accent)} .tile.burn .k{color:var(--burn)}
+.tile .v{font-family:var(--display);font-weight:700;font-size:clamp(1.7rem,5.5vw,2.6rem);line-height:1.1;font-variant-numeric:tabular-nums;margin-top:4px}
+.tile .s{font-size:.86rem;color:var(--muted)}
+.meter{height:10px;border-radius:5px;background:var(--surface);overflow:hidden;margin-top:10px}
+.meter span{display:block;height:100%;border-radius:5px;transition:width .3s}
+.tile.eat .meter span{background:var(--accent)} .tile.burn .meter span{background:var(--burn)}
+.meter span.over{background:var(--bad)!important}
+dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:8px 16px}
+dt{color:var(--muted)} dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
+.bar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--line)}
+.meals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:420px){.meals{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.meal{border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+.meal b{display:block;font-family:var(--display);font-size:1.25rem;font-variant-numeric:tabular-nums}
+.meal small{color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);margin:0}
+.warn{color:var(--warn);font-weight:700}
+.status{border-radius:12px;padding:14px 16px;font-weight:700;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.status.on{background:var(--accent-soft);color:var(--good)}
+.status.off{background:var(--burn-soft);color:var(--bad)}
+.status .num{font-family:var(--display);font-size:1.6rem;font-variant-numeric:tabular-nums}
+.status .sub{font-weight:400;color:var(--ink);font-size:.92rem;flex-basis:100%}
+ul.log{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+ul.log li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+ul.log .name{font-weight:700;overflow-wrap:anywhere}
+ul.log .meta{font-size:.82rem;color:var(--muted)}
+ul.log .cal{font-family:var(--display);font-weight:700;font-variant-numeric:tabular-nums}
+.x{font:inherit;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:1.2rem;line-height:1;padding:4px 6px;border-radius:6px}
+.x:hover{color:var(--bad)}
+.empty{color:var(--muted);font-size:.9rem;border:1px dashed var(--line);border-radius:10px;padding:12px;text-align:center}
+.lookup{border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px;background:var(--bg)}
+.lookup table{width:100%;border-collapse:collapse;font-size:.9rem}
+.lookup td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+.lookup td.c{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}
+.lookup td small{color:var(--muted)}
+.median{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.median b{font-family:var(--display);font-size:1.5rem;font-variant-numeric:tabular-nums}
+.week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end;height:130px}
+.week .col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px;min-width:0}
+.week .b{width:70%;border-radius:4px 4px 0 0;min-height:2px}
+.week .b.on{background:var(--good)} .week .b.off{background:var(--bad)} .week .b.none{background:var(--line)}
+.week small{font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.datebar{display:flex;gap:8px;align-items:center}
+.datebar input{width:auto}
+.sync{font-size:.8rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Daily Calorie Planner</h1>
+      <p>Set your plan, then log meals and workouts to see if you are on track.</p>
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tabToday" aria-selected="true">Today</button>
+      <button role="tab" id="tabPlan" aria-selected="false">My plan</button>
+    </div>
+  </header>
+
+  <!-- TODAY -->
+  <section id="viewToday" class="grid">
+    <div style="display:grid;gap:20px;min-width:0">
+      <div class="card">
+        <div class="datebar">
+          <label for="day" style="margin:0">Day</label>
+          <input id="day" type="date">
+          <span class="sync" id="sync"></span>
+        </div>
+        <div class="big">
+          <div class="tile eat">
+            <div class="k">Eaten</div>
+            <div class="v" id="tEaten">0</div>
+            <div class="s" id="tEatenSub">of 0 target</div>
+            <div class="meter"><span id="mEat"></span></div>
+          </div>
+          <div class="tile burn">
+            <div class="k">Burned</div>
+            <div class="v" id="tBurned">0</div>
+            <div class="s" id="tBurnedSub">of 0 target</div>
+            <div class="meter"><span id="mBurn"></span></div>
+          </div>
+        </div>
+        <div class="status" id="status"></div>
+      </div>
+
+      <div class="card">
+        <h2>Last 7 days <small>bars show how far over or under your daily net goal</small></h2>
+        <div class="week" id="week"></div>
+        <dl id="weekSum"></dl>
+      </div>
+    </div>
+
+    <div style="display:grid;gap:20px;min-width:0">
+      <div class="card">
+        <h2>Meals</h2>
+        <form id="mealForm" class="row3" novalidate>
+          <div class="full">
+            <label for="mealName">What you ate</label>
+            <input id="mealName" placeholder="e.g. Chipotle chicken burrito" autocomplete="off">
+          </div>
+          <div>
+            <label for="mealCal">Calories</label>
+            <input id="mealCal" type="number" inputmode="numeric" min="0" placeholder="optional">
+          </div>
+          <button class="btn" type="submit">Add</button>
+        </form>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="mealPortion" placeholder="Portion (optional), e.g. 1 large bowl" style="flex:1;min-width:180px" aria-label="Portion">
+          <button class="btn ghost" type="button" id="lookupBtn">Look up calories</button>
+        </div>
+        <div id="lookup" hidden></div>
+        <ul class="log" id="mealList"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Workouts</h2>
+        <form id="woForm" class="row3" novalidate>
+          <div class="full">
+            <label for="woType">Activity</label>
+            <select id="woType"></select>
+          </div>
+          <div>
+            <label for="woMin">Minutes</label>
+            <input id="woMin" type="number" inputmode="numeric" min="1" value="30">
+          </div>
+          <button class="btn burnb" type="submit">Add</button>
+        </form>
+        <div id="woCustom" hidden>
+          <label for="woCal">Calories burned (from your tracker)</label>
+          <input id="woCal" type="number" inputmode="numeric" min="0" placeholder="e.g. 320">
+        </div>
+        <p class="note" id="woPreview"></p>
+        <ul class="log" id="woList"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- PLAN -->
+  <section id="viewPlan" class="grid" hidden>
+    <form id="f" class="card" novalidate>
+      <div>
+        <span class="lbl">Units</span>
+        <div class="seg" id="units">
+          <button type="button" data-v="us" aria-pressed="true">lb / ft</button>
+          <button type="button" data-v="metric" aria-pressed="false">kg / cm</button>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="weight">Weight</label>
+          <input id="weight" type="number" inputmode="decimal" min="1" value="185">
+          <div class="unit" id="wUnit">pounds</div>
+        </div>
+        <div id="hUS">
+          <span class="lbl">Height</span>
+          <div class="inline">
+            <div><input id="ft" type="number" inputmode="numeric" min="3" max="8" value="5" aria-label="Feet"><div class="unit">ft</div></div>
+            <div><input id="inch" type="number" inputmode="numeric" min="0" max="11" value="10" aria-label="Inches"><div class="unit">in</div></div>
+          </div>
+        </div>
+        <div id="hMetric" hidden>
+          <label for="cm">Height</label>
+          <input id="cm" type="number" inputmode="decimal" min="90" value="178">
+          <div class="unit">centimeters</div>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="age">Age</label>
+          <input id="age" type="number" inputmode="numeric" min="15" max="100" value="35">
+        </div>
+        <div>
+          <span class="lbl">Sex</span>
+          <div class="seg" id="sex">
+            <button type="button" data-v="m" aria-pressed="true">Male</button>
+            <button type="button" data-v="f" aria-pressed="false">Female</button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label for="activity">Activity outside workouts</label>
+        <select id="activity">
+          <option value="1.2">Mostly sitting (desk job)</option>
+          <option value="1.375" selected>Light (on your feet some of the day)</option>
+          <option value="1.55">Moderate (on your feet most of the day)</option>
+          <option value="1.725">Very active (physical job)</option>
+        </select>
+      </div>
+      <div>
+        <label for="goal">Goal</label>
+        <select id="goal">
+          <option value="-1.5">Lose 1.5 lb per week</option>
+          <option value="-1" selected>Lose 1 lb per week</option>
+          <option value="-0.5">Lose 0.5 lb per week</option>
+          <option value="0">Maintain weight</option>
+          <option value="0.5">Gain 0.5 lb per week</option>
+        </select>
+      </div>
+    </form>
+
+    <div style="display:grid;gap:16px;min-width:0">
+      <div class="big">
+        <div class="tile eat"><div class="k">Eat per day</div><div class="v" id="eat">0</div><div class="s">calories from food</div></div>
+        <div class="tile burn"><div class="k">Burn per day</div><div class="v" id="burn">0</div><div class="s">calories through exercise</div></div>
+      </div>
+      <div class="card">
+        <h2>How the numbers add up</h2>
+        <div class="bar" aria-hidden="true"><span id="barFood" style="background:var(--accent)"></span><span id="barEx" style="background:var(--burn)"></span></div>
+        <dl>
+          <dt>Resting burn (BMR)</dt><dd id="bmr">0</dd>
+          <dt>Daily burn with activity (TDEE)</dt><dd id="tdee">0</dd>
+          <dt>Daily deficit or surplus</dt><dd id="delta">0</dd>
+          <dt>Body mass index</dt><dd id="bmi">0</dd>
+        </dl>
+        <p class="note" id="msg"></p>
+      </div>
+      <div class="card">
+        <h2>Meal split</h2>
+        <div class="meals">
+          <div class="meal"><small>Breakfast</small><b id="m1">0</b><small>25%</small></div>
+          <div class="meal"><small>Lunch</small><b id="m2">0</b><small>35%</small></div>
+          <div class="meal"><small>Dinner</small><b id="m3">0</b><small>30%</small></div>
+          <div class="meal"><small>Snack</small><b id="m4">0</b><small>10%</small></div>
+        </div>
+      </div>
+      <p class="note">Based on the Mifflin St Jeor equation. These are estimates for healthy adults, not medical advice. Check with a doctor before a big change in diet or exercise, especially if you are pregnant, nursing, or managing a health condition.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => Math.round(n).toLocaleString();
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const todayStr = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
+
+const ACTS = [
+  ["Brisk walking",4.3],["Walking, easy",3],["Jogging",8],["Running, fast",11],["Cycling, moderate",7],
+  ["Stationary bike",6.8],["Swimming laps",7],["Strength training",5],["HIIT class",8],["Elliptical",5],
+  ["Yoga",2.5],["Basketball",6.5],["Soccer",7],["Hiking",6],["Other (enter calories)",0]
+];
+$("woType").innerHTML = ACTS.map((a,i) => `<option value="${i}">${a[0]}</option>`).join("");
+
+/* ---------- state ---------- */
+let profile = { units:"us", sex:"m", weight:185, ft:5, inch:10, cm:178, age:35, activity:"1.375", goal:"-1" };
+let plan = { eat:0, burn:0, net:0, kg:84 };
+let day = todayStr();
+let log = { meals:[], workouts:[] };
+let days = {};               // date -> {meals, workouts}
+
+/* ---------- storage: synced db if available, else this browser ---------- */
+const store = {
+  db:null, col:null,
+  async init(){
+    try{
+      const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
+      if (db && user){ const id = await user.id(); if (id){ this.db = db; this.col = db.collection("data/users/" + id); } }
+    }catch(e){}
+    $("sync").textContent = this.col ? "Synced to your account" : "Saved in this browser";
+  },
+  async get(key){
+    if (this.col){ try{ const s = await this.col.doc(key).get(); return s.exists ? s.data() : null; }catch(e){} }
+    try{ const v = localStorage.getItem("cal:" + key); return v ? JSON.parse(v) : null; }catch(e){ return null; }
+  },
+  async set(key, val){
+    try{ localStorage.setItem("cal:" + key, JSON.stringify(val)); }catch(e){}
+    if (this.col){ try{ await this.col.doc(key).set(val); }catch(e){ $("sync").textContent = "Could not sync, saved in this browser"; } }
+  }
+};
+
+/* ---------- plan math ---------- */
+function readProfile(){
+  ["weight","ft","inch","cm","age"].forEach(k => profile[k] = +$(k).value || 0);
+  profile.activity = $("activity").value; profile.goal = $("goal").value;
+}
+function writeProfile(){
+  ["weight","ft","inch","cm","age","activity","goal"].forEach(k => $(k).value = profile[k]);
+  setSeg("units", profile.units); setSeg("sex", profile.sex); showUnits();
+}
+function setSeg(id, v){ $(id).querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === v)); }
+function showUnits(){
+  const us = profile.units === "us";
+  $("hUS").hidden = !us; $("hMetric").hidden = us; $("wUnit").textContent = us ? "pounds" : "kilograms";
+}
+
+function calcPlan(){
+  const p = profile;
+  const kg = p.units === "us" ? p.weight * 0.453592 : p.weight;
+  const cm = p.units === "us" ? (p.ft * 12 + p.inch) * 2.54 : p.cm;
+  if (kg < 25 || cm < 90 || p.age < 15){ $("msg").textContent = "Enter your weight, height and age to see results."; return; }
+  const bmr = 10*kg + 6.25*cm - 5*p.age + (p.sex === "m" ? 5 : -161);
+  const tdee = bmr * +p.activity;
+  const goal = +p.goal, delta = goal * 3500 / 7, floor = p.sex === "m" ? 1500 : 1200;
+  let eat, burn, msg = "";
+  if (goal < 0){
+    const deficit = -delta;
+    burn = Math.round(deficit * 0.4 / 10) * 10;
+    eat = tdee - (deficit - burn);
+    if (eat < floor){
+      burn += floor - eat; eat = floor;
+      msg = `<span class="warn">Your food target hit the safe minimum of ${fmt(floor)} calories, so more of the deficit moved to exercise. A slower goal may be easier to keep up.</span> `;
+    }
+    msg += `About 60% of your deficit comes from eating less and 40% from exercise, for roughly ${Math.abs(goal)} lb lost per week.`;
+  } else if (goal === 0){
+    burn = 250; eat = tdee + burn;
+    msg = "To maintain, eat back what you burn. A 250 calorie workout most days covers the general guideline of 150 minutes of moderate activity per week.";
+  } else {
+    burn = 200; eat = tdee + delta + burn;
+    msg = "For slow, lean gain, eat a small surplus and keep some exercise in, ideally strength training.";
+  }
+  plan = { eat, burn, net: eat - burn, kg, tdee, delta };
+  const bmi = kg / ((cm/100) ** 2);
+  const cat = bmi < 18.5 ? "underweight" : bmi < 25 ? "healthy range" : bmi < 30 ? "overweight" : "obese range";
+  $("eat").textContent = fmt(eat); $("burn").textContent = fmt(burn);
+  $("bmr").textContent = fmt(bmr); $("tdee").textContent = fmt(tdee);
+  $("delta").textContent = (delta > 0 ? "+" : "") + fmt(delta);
+  $("bmi").textContent = bmi.toFixed(1) + " (" + cat + ")";
+  $("msg").innerHTML = msg;
+  $("barFood").style.width = (eat/(eat+burn)*100) + "%"; $("barEx").style.width = (burn/(eat+burn)*100) + "%";
+  [[.25,"m1"],[.35,"m2"],[.30,"m3"],[.10,"m4"]].forEach(([q,id]) => $(id).textContent = fmt(eat*q));
+}
+
+/* ---------- today ---------- */
+const sum = (arr) => arr.reduce((a,x) => a + (+x.cal || 0), 0);
+
+function renderToday(){
+  const eaten = sum(log.meals), burned = sum(log.workouts);
+  $("tEaten").textContent = fmt(eaten); $("tBurned").textContent = fmt(burned);
+  const eatLeft = plan.eat - eaten, burnLeft = plan.burn - burned;
+  $("tEatenSub").textContent = eatLeft >= 0 ? `${fmt(eatLeft)} left of ${fmt(plan.eat)}` : `${fmt(-eatLeft)} over ${fmt(plan.eat)}`;
+  $("tBurnedSub").textContent = burnLeft > 0 ? `${fmt(burnLeft)} to go of ${fmt(plan.burn)}` : `Target of ${fmt(plan.burn)} reached`;
+  const me = $("mEat"); me.style.width = Math.min(100, eaten/plan.eat*100) + "%"; me.classList.toggle("over", eaten > plan.eat);
+  $("mBurn").style.width = Math.min(100, burned/plan.burn*100) + "%";
+
+  // gap vs goal: positive means behind (more net calories than planned)
+  const gap = (eaten - burned) - plan.net;
+  const st = $("status");
+  if (!log.meals.length && !log.workouts.length){
+    st.className = "status on";
+    st.innerHTML = `<span>Nothing logged yet.</span><span class="sub">Your net goal for the day is ${fmt(plan.net)} calories (food minus exercise).</span>`;
+  } else if (gap > 0){
+    st.className = "status off";
+    const lb = (gap/3500).toFixed(2);
+    const walk = Math.round(gap / (4.3*3.5*plan.kg/200));
+    st.innerHTML = `<span class="num">${fmt(gap)}</span><span>calories behind your goal</span>
+      <span class="sub">That is about ${lb} lb off this week's pace. To close it today, burn ${fmt(gap)} more (about ${walk} min of brisk walking) or eat that much less at your next meal.</span>`;
+  } else {
+    st.className = "status on";
+    const room = -gap;
+    st.innerHTML = `<span class="num">${fmt(room)}</span><span>calories of room left</span>
+      <span class="sub">You are on track. You can still eat about ${fmt(room)} calories and stay at your goal${burnLeft > 0 ? `, and ${fmt(burnLeft)} more burn would complete today's workout target` : ""}.</span>`;
+  }
+
+  $("mealList").innerHTML = log.meals.length ? log.meals.map((m,i) => `
+    <li><div><div class="name">${esc(m.name)}</div>${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ""}</div>
+    <span class="cal">${fmt(m.cal)}</span><button class="x" data-del="meals" data-i="${i}" aria-label="Remove ${esc(m.name)}">×</button></li>`).join("")
+    : `<li class="empty" style="display:block">No meals logged for this day. Type what you ate and add it, or look it up first.</li>`;
+  $("woList").innerHTML = log.workouts.length ? log.workouts.map((w,i) => `
+    <li><div><div class="name">${esc(w.name)}</div><div class="meta">${w.min ? w.min + " min" : "from tracker"}</div></div>
+    <span class="cal">${fmt(w.cal)}</span><button class="x" data-del="workouts" data-i="${i}" aria-label="Remove ${esc(w.name)}">×</button></li>`).join("")
+    : `<li class="empty" style="display:block">No workouts logged. Today's burn target is ${fmt(plan.burn)} calories.</li>`;
+  renderWeek();
+}
+
+function renderWeek(){
+  const out = [], base = new Date(day + "T12:00:00");
+  let total = 0, logged = 0;
+  for (let i = 6; i >= 0; i--){
+    const d = new Date(base); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0,10);
+    const L = key === day ? log : days[key];
+    const has = L && (L.meals?.length || L.workouts?.length);
+    const gap = has ? (sum(L.meals||[]) - sum(L.workouts||[])) - plan.net : 0;
+    if (has){ total += gap; logged++; }
+    out.push({ key, has, gap, lbl: d.toLocaleDateString(undefined,{weekday:"short"}) });
+  }
+  const max = Math.max(300, ...out.map(o => Math.abs(o.gap)));
+  $("week").innerHTML = out.map(o => `<div class="col" title="${o.key}">
+    <small>${o.has ? (o.gap > 0 ? "+" : "") + fmt(o.gap) : ""}</small>
+    <div class="b ${o.has ? (o.gap > 0 ? "off" : "on") : "none"}" style="height:${o.has ? Math.max(4, Math.abs(o.gap)/max*90) : 2}px"></div>
+    <small>${o.lbl}</small></div>`).join("");
+  $("weekSum").innerHTML = logged
+    ? `<dt>Days logged</dt><dd>${logged} of 7</dd><dt>${total > 0 ? "Behind goal" : "Ahead of goal"}</dt><dd>${fmt(Math.abs(total))} cal</dd>
+       <dt>Effect on weight</dt><dd>${total > 0 ? "+" : "−"}${(Math.abs(total)/3500).toFixed(2)} lb vs plan</dd>`
+    : `<dt>Days logged</dt><dd>0 of 7</dd>`;
+}
+
+async function loadDay(d){
+  day = d;
+  log = (await store.get("day-" + d)) || { meals:[], workouts:[] };
+  log.meals ||= []; log.workouts ||= [];
+  days[d] = log;
+  renderToday();
+}
+async function saveDay(){ days[day] = log; renderToday(); await store.set("day-" + day, log); }
+
+async function loadWeek(){
+  const base = new Date(day + "T12:00:00");
+  const keys = [];
+  for (let i = 1; i <= 6; i++){ const d = new Date(base); d.setDate(d.getDate() - i); keys.push(d.toISOString().slice(0,10)); }
+  await Promise.all(keys.map(async k => { if (!days[k]) days[k] = (await store.get("day-" + k)) || null; }));
+  renderWeek();
+}
+
+/* ---------- meals ---------- */
+$("mealForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const name = $("mealName").value.trim(), cal = +$("mealCal").value;
+  if (!name){ $("mealName").focus(); return; }
+  if (!cal){ lookup(); return; }   // no calories typed: look them up instead
+  const portion = $("mealPortion").value.trim();
+  log.meals.push({ name, cal, meta: portion || "" });
+  $("mealName").value = ""; $("mealCal").value = ""; $("mealPortion").value = "";
+  $("lookup").hidden = true;
+  saveDay();
+});
+
+let sampleFn = null, lookupCtl = null;
+$("lookupBtn").addEventListener("click", lookup);
+
+async function lookup(){
+  const name = $("mealName").value.trim();
+  const portion = $("mealPortion").value.trim();
+  const box = $("lookup");
+  if (!name){ $("mealName").focus(); return; }
+  box.hidden = false;
+  if (!sampleFn){
+    box.innerHTML = `<div class="lookup"><p class="note">Calorie lookup is not available in this view. Enter the calories yourself and tap Add.</p></div>`;
+    return;
+  }
+  lookupCtl?.abort(); lookupCtl = new AbortController();
+  $("lookupBtn").disabled = true;
+  box.innerHTML = `<div class="lookup"><p class="note">Checking nutrition sources for “${esc(name)}”…</p></div>`;
+  const prompt = `You are a nutrition lookup tool. Estimate the calories for this meal as eaten.
+Meal: ${name}
+Portion: ${portion || "one typical serving"}
+
+List the calorie value that each of 4 to 6 different well known nutrition sources gives for this item and portion. Use the restaurant's own published nutrition info first if it is a chain menu item, then sources like USDA FoodData Central, Nutritionix, CalorieKing, MyFitnessPal common entries, and popular recipe sites. Only include sources you have real knowledge of; do not invent precise figures. If the meal is a combination, total its parts.
+Reply with only JSON in this shape:
+{"meal":"short clean name","portion":"portion you assumed","sources":[{"source":"USDA FoodData Central","calories":540,"note":"brief basis"}],"confidence":"low|medium|high"}`;
+  try{
+    const r = await sampleFn.json(prompt, { signal: lookupCtl.signal, modelTier: "default" });
+    const src = (r && Array.isArray(r.sources) ? r.sources : []).filter(s => +s.calories > 0);
+    if (!src.length) throw { code:"empty" };
+    const vals = src.map(s => +s.calories).sort((a,b) => a-b);
+    const mid = vals.length % 2 ? vals[(vals.length-1)/2] : (vals[vals.length/2-1] + vals[vals.length/2]) / 2;
+    const med = Math.round(mid);
+    box.innerHTML = `<div class="lookup">
+      <div class="median"><div><span class="lbl" style="margin:0">Median of ${src.length} sources</span><b>${fmt(med)} cal</b></div>
+        <button class="btn" type="button" id="useMed">Add ${fmt(med)} cal</button></div>
+      <div style="overflow-x:auto"><table>${src.map(s => `<tr><td>${esc(s.source)}${s.note ? `<br><small>${esc(s.note)}</small>` : ""}</td><td class="c">${fmt(s.calories)}</td></tr>`).join("")}</table></div>
+      <p class="note">Portion assumed: ${esc(r.portion || portion || "typical serving")}. Range ${fmt(vals[0])} to ${fmt(vals[vals.length-1])}. Confidence: ${esc(r.confidence || "medium")}. Values are Claude's estimates of what these sources publish, so check the label or menu when you have it.</p>
+    </div>`;
+    $("useMed").addEventListener("click", () => {
+      log.meals.push({ name: r.meal || name, cal: med, meta: `${r.portion || portion || "typical serving"} · median of ${src.length} sources` });
+      $("mealName").value = ""; $("mealCal").value = ""; $("mealPortion").value = ""; box.hidden = true;
+      saveDay();
+    });
+  }catch(e){
+    if (e?.code === "cancelled") return;
+    const hide = ["not_granted","sampling_disabled","not_declared","capability_disabled","capability_removed"].includes(e?.code);
+    if (hide){ sampleFn = null; $("lookupBtn").hidden = true; }
+    const msg = e?.code === "rate_limited" ? "Too many lookups right now. Wait a minute and try again, or enter the calories yourself."
+      : hide ? "Calorie lookup was not allowed for this page. Enter the calories yourself and tap Add."
+      : "Could not find calorie values for that. Try a more specific name (brand, size) or enter the calories yourself.";
+    box.innerHTML = `<div class="lookup"><p class="note">${msg}</p></div>`;
+  }finally{ $("lookupBtn").disabled = false; }
+}
+
+/* ---------- workouts ---------- */
+function woEstimate(){
+  const a = ACTS[+$("woType").value], min = +$("woMin").value || 0;
+  return a[1] ? Math.round(a[1] * 3.5 * plan.kg / 200 * min) : (+$("woCal").value || 0);
+}
+function woUpdate(){
+  const custom = ACTS[+$("woType").value][1] === 0;
+  $("woCustom").hidden = !custom;
+  $("woPreview").textContent = custom ? "" : `About ${fmt(woEstimate())} calories at your weight.`;
+}
+["woType","woMin","woCal"].forEach(id => $(id).addEventListener("input", woUpdate));
+$("woForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const a = ACTS[+$("woType").value], cal = woEstimate(), min = +$("woMin").value || 0;
+  if (!cal){ (a[1] ? $("woMin") : $("woCal")).focus(); return; }
+  log.workouts.push({ name: a[1] ? a[0] : "Workout", cal, min: a[1] ? min : 0 });
+  $("woCal").value = "";
+  saveDay();
+});
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-del]"); if (!b) return;
+  log[b.dataset.del].splice(+b.dataset.i, 1); saveDay();
+});
+
+/* ---------- plan controls ---------- */
+function segBind(id, key){
+  $(id).querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+    const v = b.dataset.v;
+    if (key === "units" && v !== profile.units){
+      readProfile();
+      if (v === "metric"){ profile.weight = Math.round(profile.weight*0.453592); profile.cm = Math.round((profile.ft*12+profile.inch)*2.54); }
+      else { profile.weight = Math.round(profile.weight/0.453592); const t = Math.round(profile.cm/2.54); profile.ft = Math.floor(t/12); profile.inch = t%12; }
+    }
+    profile[key] = v; writeProfile(); onPlanChange();
+  }));
+}
+segBind("units","units"); segBind("sex","sex");
+let saveT;
+function onPlanChange(){
+  readProfile(); calcPlan(); woUpdate(); renderToday();
+  clearTimeout(saveT); saveT = setTimeout(() => store.set("profile", profile), 600);
+}
+["weight","ft","inch","cm","age","activity","goal"].forEach(id => $(id).addEventListener("input", onPlanChange));
+$("f").addEventListener("submit", e => e.preventDefault());
+
+/* ---------- tabs & day ---------- */
+function tab(which){
+  $("tabToday").setAttribute("aria-selected", which === "today"); $("tabPlan").setAttribute("aria-selected", which === "plan");
+  $("viewToday").hidden = which !== "today"; $("viewPlan").hidden = which !== "plan";
+}
+$("tabToday").addEventListener("click", () => tab("today"));
+$("tabPlan").addEventListener("click", () => tab("plan"));
+$("day").value = day;
+$("day").addEventListener("change", async () => { if ($("day").value){ await loadDay($("day").value); loadWeek(); } });
+
+/* ---------- boot ---------- */
+writeProfile(); calcPlan(); woUpdate(); renderToday();
+(async () => {
+  await store.init();
+  const saved = await store.get("profile");
+  if (saved){ profile = { ...profile, ...saved }; writeProfile(); calcPlan(); woUpdate(); }
+  else tab("plan");
+  await loadDay(day); loadWeek();
+  try{ sampleFn = await claude.use("sample"); }catch(e){ sampleFn = null; }
+})();
+</script>
+</body>
+</html>
