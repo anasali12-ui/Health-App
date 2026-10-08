@@ -99,6 +99,8 @@ ul.log .cal{font-family:var(--display);font-weight:700;font-variant-numeric:tabu
 .chip{font:inherit;display:grid;text-align:left;gap:2px;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
 .chip small{color:var(--muted);font-size:.8rem}
 .chip[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft);font-weight:700}
+.keybox{border-top:1px solid var(--line);padding-top:10px;display:grid;gap:8px}
+.keybox summary{cursor:pointer;color:var(--accent);font-weight:700;font-size:.9rem}
 .week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end;height:130px}
 .week .col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px;min-width:0}
 .week .b{width:70%;border-radius:4px 4px 0 0;min-height:2px}
@@ -483,19 +485,40 @@ $("mealForm").addEventListener("submit", e => {
 let sampleFn = null, lookupCtl = null;
 $("lookupBtn").addEventListener("click", lookup);
 
+const KEY_STORE = "cal:usdaKey";
+const getKey = () => { try{ return localStorage.getItem(KEY_STORE) || ""; }catch(e){ return ""; } };
+const setKey = v => { try{ v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); }catch(e){} };
+
 async function lookup(){
   const name = $("mealName").value.trim();
   const portion = $("mealPortion").value.trim();
   const box = $("lookup");
   if (!name){ $("mealName").focus(); return; }
   box.hidden = false;
-  if (!sampleFn){
-    box.innerHTML = `<div class="lookup"><p class="note">Calorie lookup is not available in this view. Enter the calories yourself and tap Add.</p></div>`;
-    return;
-  }
   lookupCtl?.abort(); lookupCtl = new AbortController();
+  const signal = lookupCtl.signal;
   $("lookupBtn").disabled = true;
   box.innerHTML = `<div class="lookup"><p class="note">Checking nutrition sources for “${esc(name)}”…</p></div>`;
+  try{
+    let data = null;
+    if (sampleFn){
+      try{ data = await lookupClaude(name, portion, signal); }
+      catch(e){
+        if (e?.code === "cancelled") return;
+        if (["not_granted","sampling_disabled","not_declared","capability_disabled","capability_removed"].includes(e?.code)) sampleFn = null;
+        data = null;   // fall through to the public databases
+      }
+    }
+    if (!data) data = await lookupDatabases(name, portion, signal);
+    renderLookup(data, name, portion);
+  }catch(e){
+    if (e?.name === "AbortError" || e?.code === "cancelled") return;
+    renderLookupError(e);
+  }finally{ $("lookupBtn").disabled = false; }
+}
+
+/* Claude (inside claude.ai only) */
+async function lookupClaude(name, portion, signal){
   const prompt = `You are a nutrition lookup tool. Find calorie values for this food as eaten.
 Meal: ${name}
 Portion the person typed: ${portion || "(none given)"}
@@ -504,53 +527,148 @@ Step 1: Decide whether this food is commonly sold or served in more than one siz
 Step 2: For each size, list the calorie value that each of 3 to 6 different well known nutrition sources gives. Use the restaurant's own published nutrition info first if it is a chain menu item, then sources like USDA FoodData Central, Nutritionix, CalorieKing, MyFitnessPal common entries, and popular recipe sites. Only include sources you have real knowledge of; do not invent precise figures. If the meal is a combination, total its parts.
 Reply with only JSON in this shape (one entry in "sizes" when there is only one size):
 {"meal":"short clean name","sizes":[{"size":"Medium (16 oz)","sources":[{"source":"USDA FoodData Central","calories":540,"note":"brief basis"}]}],"confidence":"low|medium|high"}`;
-  try{
-    const r = await sampleFn.json(prompt, { signal: lookupCtl.signal, modelTier: "default" });
-    const sizes = (r && Array.isArray(r.sizes) ? r.sizes : [])
-      .map(s => {
-        const src = (Array.isArray(s.sources) ? s.sources : []).filter(x => +x.calories > 0).sort((a,b) => b.calories - a.calories);
-        return { size: String(s.size || portion || "Typical serving"), src, high: src.length ? Math.round(+src[0].calories) : 0 };
-      })
-      .filter(s => s.src.length);
-    if (!sizes.length) throw { code:"empty" };
-    const mealName = r.meal || name;
-    const many = sizes.length > 1;
+  const r = await sampleFn.json(prompt, { signal, modelTier: "default" });
+  const sizes = (r && Array.isArray(r.sizes) ? r.sizes : []).map(s => ({
+    size: String(s.size || portion || "Typical serving"),
+    src: (Array.isArray(s.sources) ? s.sources : []).map(x => ({ source: String(x.source || "Source"), calories: Math.round(+x.calories), note: x.note || "" }))
+  }));
+  return { meal: r?.meal || name, sizes,
+    footnote: `Confidence: ${esc(r?.confidence || "medium")}. Values are Claude's estimates of what these sources publish, so check the label or menu when you have it.` };
+}
 
-    const sizeBlock = (s, i) => `
+/* Public databases: USDA FoodData Central + Open Food Facts (work on any website) */
+const SIZE_WORDS = /\b(small|medium|large|regular|kid|kids|junior|jumbo|extra large|single|double|triple|cup|cups|piece|pieces|order|serving|sandwich|burger|bowl|slice|each|item|bar|can|bottle|package|container|patty|taco|burrito|wrap|footlong|inch)\b/i;
+const SKIP_MEASURE = /\b(oz|ounce|gram|g\b|lb|pound|tbsp|tsp|tablespoon|teaspoon|fl oz|ml)\b/i;
+const clean = s => String(s || "").replace(/\s+/g, " ").trim();
+const words = s => clean(s).toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+const matchesAll = (text, q) => { const t = String(text || "").toLowerCase(); return words(q).every(w => t.includes(w)); };
+const kcalOf = nutrients => {
+  const n = (nutrients || []).find(x => (x.unitName || "").toUpperCase() === "KCAL" && (x.nutrientNumber === "208" || /energy/i.test(x.nutrientName || "")));
+  return n ? +n.value : 0;
+};
+
+async function lookupDatabases(name, portion, signal){
+  const key = getKey() || "DEMO_KEY";
+  const fdcURL = "https://api.nal.usda.gov/fdc/v1/foods/search?api_key=" + encodeURIComponent(key)
+    + "&query=" + encodeURIComponent(name) + "&pageSize=30&dataType=" + encodeURIComponent("Survey (FNDDS),Branded,SR Legacy");
+  const offURL = "https://world.openfoodfacts.org/cgi/search.pl?search_simple=1&json=1&page_size=15&fields=product_name,brands,nutriments,serving_size&search_terms=" + encodeURIComponent(name);
+
+  const [fdc, off] = await Promise.allSettled([
+    fetch(fdcURL, { signal }).then(r => { if (r.status === 429 || r.status === 403) throw { code:"usda_key", status:r.status }; if (!r.ok) throw { code:"usda_http" }; return r.json(); }),
+    fetch(offURL, { signal }).then(r => r.ok ? r.json() : null)
+  ]);
+  if (signal.aborted) throw { code:"cancelled" };
+  const foods = fdc.status === "fulfilled" ? (fdc.value.foods || []) : [];
+  const products = off.status === "fulfilled" && off.value ? (off.value.products || []) : [];
+
+  const sizeMap = new Map();   // size label -> sources
+  const add = (size, source, calories, note) => {
+    if (!(calories > 0)) return;
+    const k = size.toLowerCase();
+    if (!sizeMap.has(k)) sizeMap.set(k, { size, src: [] });
+    const list = sizeMap.get(k).src;
+    if (!list.some(x => x.source === source)) list.push({ source, calories: Math.round(calories), note });
+  };
+
+  // USDA survey foods: one source per matching food, one size per household measure
+  const survey = foods.filter(f => f.dataType === "Survey (FNDDS)").filter(f => matchesAll(f.description, name)).slice(0, 4);
+  const surveyPool = survey.length ? survey : foods.filter(f => f.dataType === "Survey (FNDDS)").slice(0, 2);
+  surveyPool.forEach(f => {
+    const per100 = kcalOf(f.foodNutrients);
+    (f.foodMeasures || []).forEach(m => {
+      const t = clean(m.disseminationText);
+      if (!t || !(m.gramWeight > 0)) return;
+      if (/quantity not specified/i.test(t)){ add("Typical serving", "USDA: " + clean(f.description), per100 * m.gramWeight / 100, `${Math.round(m.gramWeight)} g`); return; }
+      if (SKIP_MEASURE.test(t) || !SIZE_WORDS.test(t)) return;
+      add(t.replace(/^1\s+/, "").replace(/^\w/, c => c.toUpperCase()), "USDA: " + clean(f.description), per100 * m.gramWeight / 100, `${Math.round(m.gramWeight)} g`);
+    });
+  });
+
+  // USDA SR Legacy (no household measures in search): count as a 1 cup / typical reference only if nothing else
+  // Branded (USDA branded + Open Food Facts): per labeled serving
+  foods.filter(f => f.dataType === "Branded" && matchesAll(f.description + " " + (f.brandName || "") + " " + (f.brandOwner || ""), name)).slice(0, 5).forEach(f => {
+    const per100 = kcalOf(f.foodNutrients), ss = +f.servingSize, unit = (f.servingSizeUnit || "").toLowerCase();
+    if (ss > 0 && (unit === "g" || unit === "ml" || unit === "grm" || unit === "mlt"))
+      add("Packaged serving (as labeled)", "USDA branded: " + clean((f.brandName || f.brandOwner || "") + " " + f.description), per100 * ss / 100, clean(f.householdServingFullText || `${ss} ${unit}`));
+  });
+  products.filter(p => matchesAll((p.product_name || "") + " " + (p.brands || ""), name)).slice(0, 5).forEach(p => {
+    const n = p.nutriments || {};
+    const kcal = +n["energy-kcal_serving"] || 0;
+    if (kcal) add("Packaged serving (as labeled)", "Open Food Facts: " + clean((p.brands || "").split(",")[0] + " " + p.product_name), kcal, clean(p.serving_size));
+  });
+
+  let sizes = [...sizeMap.values()];
+  if (portion){
+    const hit = sizes.filter(s => matchesAll(s.size, portion));
+    if (hit.length) sizes = hit;
+  }
+  // Prefer real menu sizes over the generic buckets, keep at most 6
+  sizes.sort((a, b) => (/typical|packaged/i.test(a.size) ? 1 : 0) - (/typical|packaged/i.test(b.size) ? 1 : 0) || b.src.length - a.src.length);
+  sizes = sizes.slice(0, 6);
+  if (!sizes.length && fdc.status === "rejected" && fdc.reason?.code === "usda_key") throw fdc.reason;
+  return { meal: survey[0] ? clean(survey[0].description) : name, sizes, databases: true,
+    footnote: `From USDA FoodData Central and Open Food Facts. Check the label or menu when you have it.` };
+}
+
+function renderLookup(data, name, portion){
+  const box = $("lookup");
+  const sizes = (data.sizes || []).map(s => {
+    const src = s.src.filter(x => x.calories > 0).sort((a, b) => b.calories - a.calories);
+    return { size: s.size, src, high: src.length ? src[0].calories : 0 };
+  }).filter(s => s.src.length);
+  if (!sizes.length){ renderLookupError({ code: "empty", databases: data.databases }); return; }
+  const mealName = data.meal || name;
+  const many = sizes.length > 1;
+  const plural = n => n > 1 ? "s" : "";
+
+  box.innerHTML = `<div style="display:grid;gap:10px">
+    ${many ? `<div class="lookup">
+      <p style="margin:0;font-weight:700">${esc(mealName)} comes in ${sizes.length} sizes. Which one did you have?</p>
+      <div class="sizes" role="radiogroup" aria-label="Size">${sizes.map((s, i) => `<button type="button" class="chip" role="radio" aria-checked="false" data-pick="${i}">${esc(s.size)}<small>up to ${fmt(s.high)} cal</small></button>`).join("")}</div>
+    </div>` : ""}
+    ${sizes.map((s, i) => `
       <div class="lookup" data-size="${i}" ${many ? "hidden" : ""}>
-        <div class="median"><div><span class="lbl" style="margin:0">Highest of ${s.src.length} source${s.src.length > 1 ? "s" : ""} · ${esc(s.size)}</span><b>${fmt(s.high)} cal</b></div>
+        <div class="median"><div><span class="lbl" style="margin:0">Highest of ${s.src.length} source${plural(s.src.length)} · ${esc(s.size)}</span><b>${fmt(s.high)} cal</b></div>
           <button class="btn" type="button" data-add="${i}">Log ${fmt(s.high)} cal</button></div>
         <div style="overflow-x:auto"><table>${s.src.map((x, j) => `<tr><td>${esc(x.source)}${x.note ? `<br><small>${esc(x.note)}</small>` : ""}</td><td class="c">${fmt(x.calories)}${j === 0 ? " ▲" : ""}</td></tr>`).join("")}</table></div>
-      </div>`;
+      </div>`).join("")}
+    <p class="note">Logging uses the highest value found, so you never undercount. ${data.footnote || ""}</p>
+    ${data.databases ? keyForm() : ""}
+  </div>`;
 
-    box.innerHTML = `<div style="display:grid;gap:10px">
-      ${many ? `<div class="lookup">
-        <p style="margin:0;font-weight:700">${esc(mealName)} comes in ${sizes.length} sizes. Which one did you have?</p>
-        <div class="sizes" role="radiogroup" aria-label="Size">${sizes.map((s, i) => `<button type="button" class="chip" role="radio" aria-checked="false" data-pick="${i}">${esc(s.size)}<small>up to ${fmt(s.high)} cal</small></button>`).join("")}</div>
-      </div>` : ""}
-      ${sizes.map(sizeBlock).join("")}
-      <p class="note">Logging uses the highest value found, so you never undercount. Confidence: ${esc(r.confidence || "medium")}. Values are Claude's estimates of what these sources publish, so check the label or menu when you have it.</p>
-    </div>`;
+  box.querySelectorAll("[data-pick]").forEach(b => b.addEventListener("click", () => {
+    box.querySelectorAll("[data-pick]").forEach(x => x.setAttribute("aria-checked", x === b));
+    box.querySelectorAll("[data-size]").forEach(x => x.hidden = x.dataset.size !== b.dataset.pick);
+  }));
+  box.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+    const s = sizes[+b.dataset.add];
+    log.meals.push({ name: mealName, cal: s.high, meta: `${s.size} · highest of ${s.src.length} source${plural(s.src.length)}` });
+    $("mealName").value = ""; $("mealCal").value = ""; $("mealPortion").value = ""; box.hidden = true;
+    saveDay();
+  }));
+  bindKeyForm();
+}
 
-    box.querySelectorAll("[data-pick]").forEach(b => b.addEventListener("click", () => {
-      box.querySelectorAll("[data-pick]").forEach(x => x.setAttribute("aria-checked", x === b));
-      box.querySelectorAll("[data-size]").forEach(x => x.hidden = x.dataset.size !== b.dataset.pick);
-    }));
-    box.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
-      const s = sizes[+b.dataset.add];
-      log.meals.push({ name: mealName, cal: s.high, meta: `${s.size} · highest of ${s.src.length} source${s.src.length > 1 ? "s" : ""}` });
-      $("mealName").value = ""; $("mealCal").value = ""; $("mealPortion").value = ""; box.hidden = true;
-      saveDay();
-    }));
-  }catch(e){
-    if (e?.code === "cancelled") return;
-    const hide = ["not_granted","sampling_disabled","not_declared","capability_disabled","capability_removed"].includes(e?.code);
-    if (hide){ sampleFn = null; $("lookupBtn").hidden = true; }
-    const msg = e?.code === "rate_limited" ? "Too many lookups right now. Wait a minute and try again, or enter the calories yourself."
-      : hide ? "Calorie lookup was not allowed for this page. Enter the calories yourself and tap Add."
-      : "Could not find calorie values for that. Try a more specific name (brand, size) or enter the calories yourself.";
-    box.innerHTML = `<div class="lookup"><p class="note">${msg}</p></div>`;
-  }finally{ $("lookupBtn").disabled = false; }
+function keyForm(){
+  const has = !!getKey();
+  return `<details class="keybox"${has ? "" : ""}><summary>${has ? "Using your USDA key" : "Lookups limited? Add your free USDA key"}</summary>
+    <p class="note">Without a key the page uses USDA's shared demo key (about 30 lookups an hour). A free personal key allows 1,000 an hour. Get one at fdc.nal.usda.gov/api-key-signup, then paste it here. It is stored only in this browser.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="usdaKey" placeholder="Paste API key" value="${esc(getKey())}" style="flex:1;min-width:180px" aria-label="USDA API key"><button class="btn ghost" type="button" id="saveKey">Save key</button></div>
+    <p class="note" id="keyMsg"></p></details>`;
+}
+function bindKeyForm(){
+  const b = $("saveKey"); if (!b) return;
+  b.addEventListener("click", () => { setKey($("usdaKey").value.trim()); $("keyMsg").textContent = $("usdaKey").value.trim() ? "Saved. Tap Look up calories again." : "Key removed. Using the demo key."; });
+}
+
+function renderLookupError(e){
+  const box = $("lookup");
+  const msg = e?.code === "rate_limited" ? "Too many lookups right now. Wait a minute and try again, or enter the calories yourself."
+    : e?.code === "usda_key" ? (getKey() ? "USDA refused your key or its hourly limit was reached. Check the key below or try again later." : "The shared USDA demo key has hit its hourly limit. Add your own free key below, or enter the calories yourself.")
+    : e instanceof TypeError ? "Could not reach the nutrition databases. Check your connection, or enter the calories yourself."
+    : "Could not find calorie values for that. Try a more specific name (brand, size) or enter the calories yourself.";
+  box.innerHTML = `<div class="lookup"><p class="note">${msg}</p>${sampleFn ? "" : keyForm()}</div>`;
+  bindKeyForm();
 }
 
 /* ---------- workouts ---------- */
