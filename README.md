@@ -12,7 +12,7 @@ Open `index.html` in any browser. No build step or server needed.
 
 ## Where the data is kept
 
-* Inside claude.ai, logs sync to your Claude account and the **Look up calories** button estimates a meal's calories from several nutrition sources and uses the median.
+* Inside claude.ai, logs sync to your Claude account and the **Look up calories** button checks several nutrition sources and logs the highest calorie value found, so meals are never undercounted. When a food comes in more than one size, it asks which size you had before logging.
 * Opened anywhere else (locally or on GitHub Pages), logs are saved in your browser and calories are entered by hand. The lookup button explains that it is unavailable.
 
 ## Disclaimer

@@ -95,6 +95,10 @@ ul.log .cal{font-family:var(--display);font-weight:700;font-variant-numeric:tabu
 .lookup td small{color:var(--muted)}
 .median{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .median b{font-family:var(--display);font-size:1.5rem;font-variant-numeric:tabular-nums}
+.sizes{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:inherit;display:grid;text-align:left;gap:2px;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.chip small{color:var(--muted);font-size:.8rem}
+.chip[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft);font-weight:700}
 .week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end;height:130px}
 .week .col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px;min-width:0}
 .week .b{width:70%;border-radius:4px 4px 0 0;min-height:2px}
@@ -492,31 +496,52 @@ async function lookup(){
   lookupCtl?.abort(); lookupCtl = new AbortController();
   $("lookupBtn").disabled = true;
   box.innerHTML = `<div class="lookup"><p class="note">Checking nutrition sources for “${esc(name)}”…</p></div>`;
-  const prompt = `You are a nutrition lookup tool. Estimate the calories for this meal as eaten.
+  const prompt = `You are a nutrition lookup tool. Find calorie values for this food as eaten.
 Meal: ${name}
-Portion: ${portion || "one typical serving"}
+Portion the person typed: ${portion || "(none given)"}
 
-List the calorie value that each of 4 to 6 different well known nutrition sources gives for this item and portion. Use the restaurant's own published nutrition info first if it is a chain menu item, then sources like USDA FoodData Central, Nutritionix, CalorieKing, MyFitnessPal common entries, and popular recipe sites. Only include sources you have real knowledge of; do not invent precise figures. If the meal is a combination, total its parts.
-Reply with only JSON in this shape:
-{"meal":"short clean name","portion":"portion you assumed","sources":[{"source":"USDA FoodData Central","calories":540,"note":"brief basis"}],"confidence":"low|medium|high"}`;
+Step 1: Decide whether this food is commonly sold or served in more than one size (for example small, medium and large drinks or fries, 6 inch and footlong subs, 8 and 12 piece nuggets, 1 cup and 2 cup bowls). If the person already gave a clear portion, use only that size.
+Step 2: For each size, list the calorie value that each of 3 to 6 different well known nutrition sources gives. Use the restaurant's own published nutrition info first if it is a chain menu item, then sources like USDA FoodData Central, Nutritionix, CalorieKing, MyFitnessPal common entries, and popular recipe sites. Only include sources you have real knowledge of; do not invent precise figures. If the meal is a combination, total its parts.
+Reply with only JSON in this shape (one entry in "sizes" when there is only one size):
+{"meal":"short clean name","sizes":[{"size":"Medium (16 oz)","sources":[{"source":"USDA FoodData Central","calories":540,"note":"brief basis"}]}],"confidence":"low|medium|high"}`;
   try{
     const r = await sampleFn.json(prompt, { signal: lookupCtl.signal, modelTier: "default" });
-    const src = (r && Array.isArray(r.sources) ? r.sources : []).filter(s => +s.calories > 0);
-    if (!src.length) throw { code:"empty" };
-    const vals = src.map(s => +s.calories).sort((a,b) => a-b);
-    const mid = vals.length % 2 ? vals[(vals.length-1)/2] : (vals[vals.length/2-1] + vals[vals.length/2]) / 2;
-    const med = Math.round(mid);
-    box.innerHTML = `<div class="lookup">
-      <div class="median"><div><span class="lbl" style="margin:0">Median of ${src.length} sources</span><b>${fmt(med)} cal</b></div>
-        <button class="btn" type="button" id="useMed">Add ${fmt(med)} cal</button></div>
-      <div style="overflow-x:auto"><table>${src.map(s => `<tr><td>${esc(s.source)}${s.note ? `<br><small>${esc(s.note)}</small>` : ""}</td><td class="c">${fmt(s.calories)}</td></tr>`).join("")}</table></div>
-      <p class="note">Portion assumed: ${esc(r.portion || portion || "typical serving")}. Range ${fmt(vals[0])} to ${fmt(vals[vals.length-1])}. Confidence: ${esc(r.confidence || "medium")}. Values are Claude's estimates of what these sources publish, so check the label or menu when you have it.</p>
+    const sizes = (r && Array.isArray(r.sizes) ? r.sizes : [])
+      .map(s => {
+        const src = (Array.isArray(s.sources) ? s.sources : []).filter(x => +x.calories > 0).sort((a,b) => b.calories - a.calories);
+        return { size: String(s.size || portion || "Typical serving"), src, high: src.length ? Math.round(+src[0].calories) : 0 };
+      })
+      .filter(s => s.src.length);
+    if (!sizes.length) throw { code:"empty" };
+    const mealName = r.meal || name;
+    const many = sizes.length > 1;
+
+    const sizeBlock = (s, i) => `
+      <div class="lookup" data-size="${i}" ${many ? "hidden" : ""}>
+        <div class="median"><div><span class="lbl" style="margin:0">Highest of ${s.src.length} source${s.src.length > 1 ? "s" : ""} · ${esc(s.size)}</span><b>${fmt(s.high)} cal</b></div>
+          <button class="btn" type="button" data-add="${i}">Log ${fmt(s.high)} cal</button></div>
+        <div style="overflow-x:auto"><table>${s.src.map((x, j) => `<tr><td>${esc(x.source)}${x.note ? `<br><small>${esc(x.note)}</small>` : ""}</td><td class="c">${fmt(x.calories)}${j === 0 ? " ▲" : ""}</td></tr>`).join("")}</table></div>
+      </div>`;
+
+    box.innerHTML = `<div style="display:grid;gap:10px">
+      ${many ? `<div class="lookup">
+        <p style="margin:0;font-weight:700">${esc(mealName)} comes in ${sizes.length} sizes. Which one did you have?</p>
+        <div class="sizes" role="radiogroup" aria-label="Size">${sizes.map((s, i) => `<button type="button" class="chip" role="radio" aria-checked="false" data-pick="${i}">${esc(s.size)}<small>up to ${fmt(s.high)} cal</small></button>`).join("")}</div>
+      </div>` : ""}
+      ${sizes.map(sizeBlock).join("")}
+      <p class="note">Logging uses the highest value found, so you never undercount. Confidence: ${esc(r.confidence || "medium")}. Values are Claude's estimates of what these sources publish, so check the label or menu when you have it.</p>
     </div>`;
-    $("useMed").addEventListener("click", () => {
-      log.meals.push({ name: r.meal || name, cal: med, meta: `${r.portion || portion || "typical serving"} · median of ${src.length} sources` });
+
+    box.querySelectorAll("[data-pick]").forEach(b => b.addEventListener("click", () => {
+      box.querySelectorAll("[data-pick]").forEach(x => x.setAttribute("aria-checked", x === b));
+      box.querySelectorAll("[data-size]").forEach(x => x.hidden = x.dataset.size !== b.dataset.pick);
+    }));
+    box.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+      const s = sizes[+b.dataset.add];
+      log.meals.push({ name: mealName, cal: s.high, meta: `${s.size} · highest of ${s.src.length} source${s.src.length > 1 ? "s" : ""}` });
       $("mealName").value = ""; $("mealCal").value = ""; $("mealPortion").value = ""; box.hidden = true;
       saveDay();
-    });
+    }));
   }catch(e){
     if (e?.code === "cancelled") return;
     const hide = ["not_granted","sampling_disabled","not_declared","capability_disabled","capability_removed"].includes(e?.code);
